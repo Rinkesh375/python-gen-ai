@@ -1,1 +1,1 @@
-explain this code in Hinglish + English and .py notes with name and other good realuse examples
+explain this code in Hinglish + English and .py notes with name and other good real use examples and give me some  bad example of this input output and if it can be improved give me that version of code too
