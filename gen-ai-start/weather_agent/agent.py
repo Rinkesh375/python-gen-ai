@@ -5,6 +5,8 @@ import requests
 from urllib.parse import quote
 from pydantic import BaseModel, Field
 from typing import Optional
+import subprocess
+
 
 # --------------------------------------------------
 # 1. SETUP
@@ -18,6 +20,35 @@ client = OpenAI()
 # --------------------------------------------------
 # 2. TOOLS
 # --------------------------------------------------
+
+def run_command(cmd: str):
+    """
+    Execute a system command and return its output.
+    """
+
+    try:
+        result = subprocess.run(
+            cmd,
+            shell=True,
+            capture_output=True,
+            text=True,
+            timeout=30
+        )
+
+        if result.returncode == 0:
+            return result.stdout.strip()
+
+        return (
+            f"Command failed with exit code {result.returncode}\n"
+            f"Error: {result.stderr.strip()}"
+        )
+
+    except subprocess.TimeoutExpired:
+        return "Command timed out after 30 seconds."
+
+    except Exception as error:
+        return f"Command execution failed: {error}"
+
 
 def get_weather(city: str):
     """
@@ -45,7 +76,8 @@ def get_weather(city: str):
 
 # All tools available to our AI agent
 available_tools = {
-    "get_weather": get_weather
+    "get_weather": get_weather,
+    "run_command": run_command
 }
 
 
@@ -89,6 +121,9 @@ Available tools:
 get_weather(city: str)
 - Takes a city name.
 - Returns the current weather information.
+
+run_command(cmd:str)
+- Takes a system linux command as string and executes the command return the result  
 
 JSON format:
 
@@ -167,10 +202,26 @@ Assistant:
 
 
 class MyOutputFormat(BaseModel):
-    step: str = Field(..., description="The ID of the step. Example: PLAN, OUTPUT, TOOL, etc")
-    content: Optional[str] = Field(None, description="The optional string content for the step")
-    tool: Optional[str] = Field(None, description="The ID of the tool to call.")
-    input: Optional[str] = Field(None, description="The input params for the tool")
+    step: str = Field(
+        ...,
+        description="The ID of the step. Example: PLAN, OUTPUT, TOOL, etc"
+    )
+
+    content: Optional[str] = Field(
+        None,
+        description="The optional string content for the step"
+    )
+
+    tool: Optional[str] = Field(
+        None,
+        description="The ID of the tool to call."
+    )
+
+    input: Optional[str] = Field(
+        None,
+        description="The input params for the tool"
+    )
+
 
 # --------------------------------------------------
 # 4. MESSAGE HISTORY
@@ -183,13 +234,25 @@ message_history = [
     }
 ]
 
+
+# --------------------------------------------------
+# 5. CHAT LOOP
+# --------------------------------------------------
+
 while True:
 
     # --------------------------------------------------
-    # 5. GET USER INPUT
+    # GET USER INPUT
     # --------------------------------------------------
 
     user_query = input("\n👤 You: ").strip()
+
+    if not user_query:
+        continue
+
+    if user_query.lower() in ["exit", "quit"]:
+        print("\n👋 Goodbye!")
+        break
 
     message_history.append({
         "role": "user",
@@ -211,16 +274,25 @@ while True:
         )
 
         # Get AI response
-        raw_result = response.choices[0].message.conent
+        message = response.choices[0].message
+
+        # IMPORTANT:
+        # You had `conent` here.
+        # It should be `content`.
+        raw_result = message.content
 
         # Save AI response in conversation history
         message_history.append({
             "role": "assistant",
             "content": raw_result
         })
-        
-        parsed_result = response.choices[0].message.parsed
 
+        # Parsed Pydantic object
+        parsed_result = message.parsed
+
+        if parsed_result is None:
+            print("\n❌ Could not parse AI response.")
+            break
 
 
         # --------------------------------------------------
@@ -268,10 +340,21 @@ while True:
             print(f"   Input : {tool_input}")
 
 
-            # Check whether tool exists
-            if tool_name not in available_tools:
+            # --------------------------------------------------
+            # Validate tool
+            # --------------------------------------------------
+
+            if not tool_name:
+
+                tool_response = "No tool name was provided."
+
+            elif tool_name not in available_tools:
 
                 tool_response = f"Tool '{tool_name}' does not exist."
+
+            elif tool_input is None:
+
+                tool_response = "No input was provided for the tool."
 
             else:
 
